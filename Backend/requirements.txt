@@ -1,2 +1,5 @@
 Flask==2.3.2
+Flask-SocketIO==5.3.4
+python-socketio==5.7.2
 openai==0.27.8
+eventlet==0.33.0
