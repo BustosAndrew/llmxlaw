@@ -5,10 +5,10 @@ import os
 
 app = Flask(__name__)
 
-# Initialize the OpenAI client
+# Initialize client
 client = OpenAI()
 
-# Global Variables
+
 turn = 1
 conversation_history = []
 initial_questions = {
@@ -31,24 +31,21 @@ defendant_profile = {}
 plaintiff_question_index = 0
 defendant_question_index = 0
 
-# Initial Directions for the AI Mediator
+# prompt
 directions = "\nYou are an AI mediator facilitating a dispute resolution between two parties. Your primary goal is to guide both parties toward a fair and mutually agreeable solution. You will only address one user at a time based on whose turn it is. Always respond to the current user and ensure the other user's concerns are considered in your mediation. Here are your key responsibilities and objectives: Tone and Language: - Maintain a **professional**, **neutral**, and **inviting** tone throughout the conversation. - Be **calm**, **polite**, and **understanding** in your responses to ensure that both parties feel heard. - Use **clear**, **concise**, and **neutral language** when summarizing each party's input. - Avoid taking sides or showing bias toward one party. Always remain impartial. Output Guidelines: 1. **Summarize** the current user's input, highlighting their concerns, arguments, or requests. 2. After summarizing, offer **balanced suggestions** or potential solutions that consider the concerns of both parties. 3. Ensure the current user understands how the other party might respond and encourage them to work toward a compromise. 4. Use your responses to **de-escalate** tensions if necessary and focus on finding common ground.\n"
 
-# Route to ask initial questions and collect responses
 @app.route('/initial_questions', methods=['POST'])
 def initial_questions_route():
     global plaintiff_question_index, defendant_question_index, plaintiff_profile, defendant_profile
 
-    # Get data from request (who is answering and their answer)
     data = request.json
-    user_type = data['user_type']  # 'plaintiff' or 'defendant'
-    answer = data['answer']  # Answer to the last question
+    user_type = data['user_type']  
+    answer = data['answer']  
 
-    # Depending on who is answering, update the relevant profile and ask the next question
     if user_type == "plaintiff":
         question_index = plaintiff_question_index
         if question_index < len(initial_questions["plaintiff"]):
-            if question_index == 1:  # Update question with actual damages
+            if question_index == 1:  
                 initial_questions["defendant"][1] = f"Do you confirm that the plaintiff is seeking {plaintiff_profile['damages_seeking']} in damages?"
 
             # Store answer
@@ -61,7 +58,6 @@ def initial_questions_route():
             elif question_index == 3:
                 plaintiff_profile['lowest_payout'] = answer
 
-            # Prepare next question
             plaintiff_question_index += 1
             if plaintiff_question_index < len(initial_questions["plaintiff"]):
                 next_question = initial_questions["plaintiff"][plaintiff_question_index]
@@ -73,7 +69,6 @@ def initial_questions_route():
         question_index = defendant_question_index
         if question_index < len(initial_questions["defendant"]):
 
-            # Store answer
             if question_index == 0:
                 defendant_profile['damages_seeking'] = answer
             elif question_index == 1:
@@ -85,36 +80,33 @@ def initial_questions_route():
             elif question_index == 4:
                 defendant_profile['max_payment'] = answer
 
-            # Prepare next question
             defendant_question_index += 1
             if defendant_question_index < len(initial_questions["defendant"]):
                 next_question = initial_questions["defendant"][defendant_question_index]
                 return jsonify({"next_question": next_question})
             else:
-                # Once all initial questions are answered, add profiles to conversation history and add directions
                 plaintiff_history = f"\nPlaintiff Profile: {plaintiff_profile}\n"
                 defendant_history = f"\nDefendant Profile: {defendant_profile}\n"
                 conversation_history.append(plaintiff_history)
                 conversation_history.append(defendant_history)
 
-                # Add the initial directions for the AI Mediator
                 conversation_history.append(directions)
                 return jsonify({"message": "Defendant questions completed. Mediation ready to start."})
 
     return jsonify({"error": "Invalid user type or no more questions"})
 
 
-# Route for turn-based mediation between plaintiff and defendant
+# turn-based mediation between plaintiff and defendant
 @app.route('/mediate', methods=['POST'])
 def mediate():
     global turn, conversation_history
 
-    # Get input from front-end in JSON format
+    # Get input from front-end 
     data = request.json
     plaintiff_name = data['plaintiff_name']
     defendant_name = data['defendant_name']
 
-    # Switch turn based on global `turn` variable
+    # Switch turn 
     if turn == 1:
         current_user = plaintiff_name
         other_user = defendant_name
@@ -124,7 +116,7 @@ def mediate():
 
     user_input = data['user_input']
 
-    # Add current user's input to the conversation history
+    # Add current user's input 
     conversation_history.append(f"{current_user}: {user_input}")
 
     # Combine conversation history into a single prompt for GPT-4
