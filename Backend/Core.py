@@ -13,6 +13,7 @@ client = OpenAI()
 # Global Variables
 turn = 1
 conversation_history = []
+clients = {'plaintiff': None, 'defendant': None}  # Store socket connections
 initial_questions = {
     "plaintiff": [
         "What kind of dispute is this?",
@@ -42,6 +43,28 @@ directions = "\nYou are an AI mediator facilitating a dispute resolution between
 def handle_connect():
     emit('response', {'message': 'Connected to the Mediation Server'})
 
+
+# WebSocket to register the user (plaintiff or defendant)
+@socketio.on('register_user')
+def register_user(data):
+    global clients
+    user_type = data['user_type']  # 'plaintiff' or 'defendant'
+
+    # Register the connection for the specific user
+    if user_type in clients:
+        clients[user_type] = request.sid
+        emit('response', {'message': f'{user_type} connected with SID {request.sid}'})
+
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    global clients
+    for user_type, sid in clients.items():
+        if sid == request.sid:
+            clients[user_type] = None
+            break
+
+
 # WebSocket to ask initial questions and collect responses
 @socketio.on('initial_questions')
 def handle_initial_questions(data):
@@ -68,9 +91,9 @@ def handle_initial_questions(data):
             plaintiff_question_index += 1
             if plaintiff_question_index < len(initial_questions["plaintiff"]):
                 next_question = initial_questions["plaintiff"][plaintiff_question_index]
-                emit('next_question', {'next_question': next_question})
+                emit('next_question', {'next_question': next_question}, to=clients['plaintiff'])
             else:
-                emit('message', {'message': "Plaintiff questions completed."})
+                emit('message', {'message': "Plaintiff questions completed."}, to=clients['plaintiff'])
 
     elif user_type == "defendant":
         question_index = defendant_question_index
@@ -90,7 +113,7 @@ def handle_initial_questions(data):
             defendant_question_index += 1
             if defendant_question_index < len(initial_questions["defendant"]):
                 next_question = initial_questions["defendant"][defendant_question_index]
-                emit('next_question', {'next_question': next_question})
+                emit('next_question', {'next_question': next_question}, to=clients['defendant'])
             else:
                 plaintiff_history = f"\nPlaintiff Profile: {plaintiff_profile}\n"
                 defendant_history = f"\nDefendant Profile: {defendant_profile}\n"
@@ -98,12 +121,13 @@ def handle_initial_questions(data):
                 conversation_history.append(defendant_history)
 
                 conversation_history.append(directions)
-                emit('message', {'message': "Defendant questions completed. Mediation ready to start."})
+                emit('message', {'message': "Defendant questions completed. Mediation ready to start."}, to=clients['defendant'])
+
 
 # WebSocket to handle turn-based mediation
 @socketio.on('mediate')
 def handle_mediate(data):
-    global turn, conversation_history
+    global turn, conversation_history, clients
 
     plaintiff_name = data['plaintiff_name']
     defendant_name = data['defendant_name']
@@ -111,9 +135,11 @@ def handle_mediate(data):
     if turn == 1:
         current_user = plaintiff_name
         other_user = defendant_name
+        current_user_sid = clients['plaintiff']
     else:
         current_user = defendant_name
         other_user = plaintiff_name
+        current_user_sid = clients['defendant']
 
     user_input = data['user_input']
     conversation_history.append(f"{current_user}: {user_input}")
@@ -134,7 +160,8 @@ def handle_mediate(data):
 
     turn = 1 if turn == 2 else 2
 
-    emit('ai_response', {'ai_response': ai_response, 'next_user': other_user})
+    # Emit the response only to the current user
+    emit('ai_response', {'ai_response': ai_response, 'next_user': other_user}, to=current_user_sid)
 
 
 # Flask root to confirm Flask is running
