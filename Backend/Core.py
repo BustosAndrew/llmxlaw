@@ -1,14 +1,16 @@
 import openai
 from openai import OpenAI
 from flask import Flask, request, jsonify
+from flask_socketio import SocketIO, emit
 import os
 
 app = Flask(__name__)
+socketio = SocketIO(app)
 
-# Initialize client
+# Initialize the OpenAI client
 client = OpenAI()
 
-
+# Global Variables
 turn = 1
 conversation_history = []
 initial_questions = {
@@ -31,24 +33,29 @@ defendant_profile = {}
 plaintiff_question_index = 0
 defendant_question_index = 0
 
-# prompt
+# Initial Directions for the AI Mediator
 directions = "\nYou are an AI mediator facilitating a dispute resolution between two parties. Your primary goal is to guide both parties toward a fair and mutually agreeable solution. You will only address one user at a time based on whose turn it is. Always respond to the current user and ensure the other user's concerns are considered in your mediation. Here are your key responsibilities and objectives: Tone and Language: - Maintain a **professional**, **neutral**, and **inviting** tone throughout the conversation. - Be **calm**, **polite**, and **understanding** in your responses to ensure that both parties feel heard. - Use **clear**, **concise**, and **neutral language** when summarizing each party's input. - Avoid taking sides or showing bias toward one party. Always remain impartial. Output Guidelines: 1. **Summarize** the current user's input, highlighting their concerns, arguments, or requests. 2. After summarizing, offer **balanced suggestions** or potential solutions that consider the concerns of both parties. 3. Ensure the current user understands how the other party might respond and encourage them to work toward a compromise. 4. Use your responses to **de-escalate** tensions if necessary and focus on finding common ground.\n"
 
-@app.route('/initial_questions', methods=['POST'])
-def initial_questions_route():
+
+# WebSocket to handle communication between both parties
+@socketio.on('connect')
+def handle_connect():
+    emit('response', {'message': 'Connected to the Mediation Server'})
+
+# WebSocket to ask initial questions and collect responses
+@socketio.on('initial_questions')
+def handle_initial_questions(data):
     global plaintiff_question_index, defendant_question_index, plaintiff_profile, defendant_profile
 
-    data = request.json
-    user_type = data['user_type']  
-    answer = data['answer']  
+    user_type = data['user_type']  # 'plaintiff' or 'defendant'
+    answer = data['answer']  # Answer to the last question
 
     if user_type == "plaintiff":
         question_index = plaintiff_question_index
         if question_index < len(initial_questions["plaintiff"]):
-            if question_index == 1:  
+            if question_index == 1:  # Update question with actual damages
                 initial_questions["defendant"][1] = f"Do you confirm that the plaintiff is seeking {plaintiff_profile['damages_seeking']} in damages?"
 
-            # Store answer
             if question_index == 0:
                 plaintiff_profile['dispute_type'] = answer
             elif question_index == 1:
@@ -61,9 +68,9 @@ def initial_questions_route():
             plaintiff_question_index += 1
             if plaintiff_question_index < len(initial_questions["plaintiff"]):
                 next_question = initial_questions["plaintiff"][plaintiff_question_index]
-                return jsonify({"next_question": next_question})
+                emit('next_question', {'next_question': next_question})
             else:
-                return jsonify({"message": "Plaintiff questions completed."})
+                emit('message', {'message': "Plaintiff questions completed."})
 
     elif user_type == "defendant":
         question_index = defendant_question_index
@@ -83,7 +90,7 @@ def initial_questions_route():
             defendant_question_index += 1
             if defendant_question_index < len(initial_questions["defendant"]):
                 next_question = initial_questions["defendant"][defendant_question_index]
-                return jsonify({"next_question": next_question})
+                emit('next_question', {'next_question': next_question})
             else:
                 plaintiff_history = f"\nPlaintiff Profile: {plaintiff_profile}\n"
                 defendant_history = f"\nDefendant Profile: {defendant_profile}\n"
@@ -91,22 +98,16 @@ def initial_questions_route():
                 conversation_history.append(defendant_history)
 
                 conversation_history.append(directions)
-                return jsonify({"message": "Defendant questions completed. Mediation ready to start."})
+                emit('message', {'message': "Defendant questions completed. Mediation ready to start."})
 
-    return jsonify({"error": "Invalid user type or no more questions"})
-
-
-# turn-based mediation between plaintiff and defendant
-@app.route('/mediate', methods=['POST'])
-def mediate():
+# WebSocket to handle turn-based mediation
+@socketio.on('mediate')
+def handle_mediate(data):
     global turn, conversation_history
 
-    # Get input from front-end 
-    data = request.json
     plaintiff_name = data['plaintiff_name']
     defendant_name = data['defendant_name']
 
-    # Switch turn 
     if turn == 1:
         current_user = plaintiff_name
         other_user = defendant_name
@@ -115,16 +116,11 @@ def mediate():
         other_user = plaintiff_name
 
     user_input = data['user_input']
-
-    # Add current user's input 
     conversation_history.append(f"{current_user}: {user_input}")
 
-    # Combine conversation history into a single prompt for GPT-4
     history = "\n".join(conversation_history)
-    prompt = f"\n{current_user} has raised the following points: {user_input}. \
-    As a mediator, please suggest a fair resolution to {other_user}, addressing {current_user}'s concerns."
+    prompt = f"\n{current_user} has raised the following points: {user_input}. As a mediator, please suggest a fair resolution to {other_user}, addressing {current_user}'s concerns."
 
-    # Step 1: Feed input to the LLM for mediation
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
@@ -133,25 +129,19 @@ def mediate():
         ]
     )
 
-    # Step 2: Get response from the LLM
     ai_response = completion.choices[0].message.content
-
-    # Add AI response to conversation history
     conversation_history.append(f"AI Mediator to {other_user}: {ai_response}")
 
-    # Alternate the turn for the next user
     turn = 1 if turn == 2 else 2
 
-    # Return AI response in JSON format
-    return jsonify({"ai_response": ai_response, "next_user": other_user})
+    emit('ai_response', {'ai_response': ai_response, 'next_user': other_user})
 
 
 # Flask root to confirm Flask is running
 @app.route('/')
 def index():
-    return "Mediation API is running. Use /initial_questions and /mediate routes."
+    return "Mediation API with WebSocket is running."
 
 
-# Run the Flask app
 if __name__ == '__main__':
-    app.run(debug=True)
+    socketio.run(app, debug=True)
