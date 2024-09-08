@@ -6,37 +6,58 @@ import io from 'socket.io-client';
 const socket = io('http://localhost:5000');
 
 function App() {
-	const [title, setTitle] = useState('Dispute');
+	const [title, setTitle] = useState('Dispute Mediation');
 	const [messages, setMessages] = useState([]);
+	const [userType, setUserType] = useState('');
+	const [currentQuestion, setCurrentQuestion] = useState('');
+	const [mediationStarted, setMediationStarted] = useState(false);
+	const [nextUser, setNextUser] = useState('');
 
 	useEffect(() => {
-		// Listen for incoming messages
-		socket.on('message', (message) => {
-			setMessages((prevMessages) => [...prevMessages, message]);
+		socket.on('response', (data) => {
+			setMessages((prevMessages) => [...prevMessages, data.message]);
 		});
 
-		// Fetch initial messages when the component mounts
-		fetchMessages();
+		socket.on('next_question', (data) => {
+			setCurrentQuestion(data.next_question);
+		});
 
-		// Clean up the socket connection on unmount
+		socket.on('message', (data) => {
+			setMessages((prevMessages) => [...prevMessages, data.message]);
+			if (data.message.includes('Mediation ready to start')) {
+				setMediationStarted(true);
+			}
+		});
+
+		socket.on('ai_response', (data) => {
+			setMessages((prevMessages) => [...prevMessages, data.ai_response]);
+			setNextUser(data.next_user);
+		});
+
 		return () => {
+			socket.off('response');
+			socket.off('next_question');
 			socket.off('message');
+			socket.off('ai_response');
 		};
 	}, []);
 
-	const fetchMessages = async () => {
-		try {
-			const response = await fetch('http://localhost:5000/messages');
-			const data = await response.json();
-			setMessages(data);
-		} catch (error) {
-			console.error('Error fetching messages:', error);
-		}
+	const registerUser = (type) => {
+		setUserType(type);
+		socket.emit('register_user', { user_type: type });
+		socket.emit('initial_questions', { user_type: type });
 	};
 
-	const submit = (text) => {
-		// Emit the message to the server
-		socket.emit('sendMessage', { text });
+	const submitAnswer = (text) => {
+		if (!mediationStarted) {
+			socket.emit('initial_questions', { user_type: userType, answer: text });
+		} else {
+			socket.emit('mediate', {
+				plaintiff_name: 'Plaintiff',
+				defendant_name: 'Defendant',
+				user_input: text,
+			});
+		}
 	};
 
 	return (
@@ -44,7 +65,7 @@ function App() {
 			<div className="w-1/2 h-5/6 flex flex-col gap-2">
 				<div className="text-3xl font-bold self-start">{title}</div>
 				<Messages messages={messages} />
-				<Search submit={submit} />
+				<Search submit={submitAnswer} />
 			</div>
 		</div>
 	);
