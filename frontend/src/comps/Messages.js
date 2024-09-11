@@ -5,9 +5,9 @@ export const Messages = ({ messages }) => {
 		<div className="p-3 px-4 bg-white border-black border-[.5px] shadow overflow-y-scroll rounded-lg h-full w-full flex flex-col gap-3">
 			{messages.map((message, index) => (
 				<Message
-					content={message.content}
+					content={message.message}
 					key={index}
-					author={message.author}
+					// author={message.author}
 				/>
 			))}
 		</div>

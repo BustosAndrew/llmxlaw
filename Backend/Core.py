@@ -2,13 +2,13 @@ import openai
 from openai import OpenAI
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, emit
-from flask_cors import CORS 
+from flask_cors import CORS
 import os
 from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
-socketio = SocketIO(app)
+socketio = SocketIO(app, cors_allowed_origins=['http://localhost:3000'])
 
 # Initialize the OpenAI client
 client = OpenAI()
@@ -26,13 +26,13 @@ plaintiff_name = ""
 defendant_name = ""
 initial_questions = {
     "plaintiff": [
-        "What kind of dispute is this?",
+        "What kind of dispute are you resolving?",
         "How much are you seeking in damages?",
         "How much do you earn per hour?",
         "What's the lowest payout you would take?"
     ],
     "defendant": [
-        "How much are you seeking in damages?",
+        '',
         "Do you confirm that the plaintiff is seeking $xxxx in damages?",
         "How much do you earn per hour?",
         "How much would you pay to avoid this?",
@@ -67,6 +67,8 @@ Output Guidelines:
 """
 
 # Helper function to calculate court costs and opportunity cost
+
+
 def calculate_costs(user_type):
     global courtCostTotal
 
@@ -118,16 +120,19 @@ def confirm_common_price(data):
         # Both agreed, mediation ends
         common_price_reached = True
         generate_log("Mediation successfully concluded.")
-        emit('ai_response', {'ai_response': "Both parties have agreed to the common price. Mediation successfully concluded."}, broadcast=True)
+        emit('ai_response', {
+             'ai_response': "Both parties have agreed to the common price. Mediation successfully concluded."}, broadcast=True)
         return
     elif plaintiff_agrees or defendant_agrees:
         # One party agreed, continue to wait for the other party's response
-        emit('ai_response', {'ai_response': f"Waiting for the other party to confirm the common price."})
+        emit('ai_response', {
+             'ai_response': f"Waiting for the other party to confirm the common price."})
         return
     else:
         # If one or both disagree, continue mediation
         common_price_reached = False
-        emit('ai_response', {'ai_response': "One or both parties have disagreed. Continuing mediation."}, broadcast=True)
+        emit('ai_response', {
+             'ai_response': "One or both parties have disagreed. Continuing mediation."}, broadcast=True)
         return
 
 
@@ -158,7 +163,7 @@ def generate_log(conclusion_message):
 # WebSocket to handle communication between both parties
 @socketio.on('connect')
 def handle_connect():
-    emit('response', {'message': 'Connected to the Mediation Server'})
+    print('connected')
 
 
 # WebSocket to register the user (plaintiff or defendant)
@@ -171,7 +176,7 @@ def register_user(data):
     # Register the connection for the specific user
     if user_type in clients:
         clients[user_type] = request.sid
-        emit('response', {'message': f'{user_type} connected with SID {request.sid}'})
+        # print('message' + f'{user_type} connected with SID {request.sid})
 
         # Store the user's name
         if user_type == 'plaintiff':
@@ -200,13 +205,16 @@ def handle_initial_questions(data):
     if user_type == "plaintiff":
         question_index = plaintiff_question_index
         if question_index < len(initial_questions["plaintiff"]):
-            if question_index == 1:  # Update question with actual damages
-                initial_questions["defendant"][1] = f"Do you confirm that the plaintiff is seeking {plaintiff_profile['damages_seeking']} in damages?"
+            # if question_index == 1:  # Update question with actual damages
+            #     initial_questions["defendant"][1] = f"Do you confirm that the plaintiff is seeking {
+            #         plaintiff_profile['damages_seeking']} in damages?"
 
             if question_index == 0:
                 plaintiff_profile['dispute_type'] = answer
             elif question_index == 1:
                 plaintiff_profile['damages_seeking'] = answer
+                initial_questions["defendant"][1] = f"Do you confirm that the plaintiff is seeking {
+                    plaintiff_profile['damages_seeking']} in damages?"
             elif question_index == 2:
                 plaintiff_profile['earnings_per_hour'] = answer
             elif question_index == 3:
@@ -215,17 +223,16 @@ def handle_initial_questions(data):
             plaintiff_question_index += 1
             if plaintiff_question_index < len(initial_questions["plaintiff"]):
                 next_question = initial_questions["plaintiff"][plaintiff_question_index]
-                emit('next_question', {'next_question': next_question}, to=clients['plaintiff'])
+                emit('next_question', {
+                     'next_question': next_question}, to=clients['plaintiff'])
             else:
-                emit('message', {'message': "Plaintiff questions completed."}, to=clients['plaintiff'])
+                emit('message', {'author': 'Mediator',
+                     'message': "Plaintiff questions completed."}, to=clients['plaintiff'])
 
     elif user_type == "defendant":
         question_index = defendant_question_index
         if question_index < len(initial_questions["defendant"]):
-
-            if question_index == 0:
-                defendant_profile['damages_seeking'] = answer
-            elif question_index == 1:
+            if question_index == 1:
                 defendant_profile['confirm_damages'] = answer
             elif question_index == 2:
                 defendant_profile['earnings_per_hour'] = answer
@@ -237,15 +244,22 @@ def handle_initial_questions(data):
             defendant_question_index += 1
             if defendant_question_index < len(initial_questions["defendant"]):
                 next_question = initial_questions["defendant"][defendant_question_index]
-                emit('next_question', {'next_question': next_question}, to=clients['defendant'])
+                emit('next_question', {
+                     'next_question': next_question}, to=clients['defendant'])
             else:
-                plaintiff_history = f"\nPlaintiff Profile: {plaintiff_profile}\n"
-                defendant_history = f"\nDefendant Profile: {defendant_profile}\n"
-                conversation_history.append({"author": "mediator", "message": plaintiff_history})
-                conversation_history.append({"author": "mediator", "message": defendant_history})
+                plaintiff_history = f"\nPlaintiff Profile: {
+                    plaintiff_profile}\n"
+                defendant_history = f"\nDefendant Profile: {
+                    defendant_profile}\n"
+                conversation_history.append(
+                    {"author": "mediator", "message": plaintiff_history})
+                conversation_history.append(
+                    {"author": "mediator", "message": defendant_history})
 
-                conversation_history.append({"author": "mediator", "message": directions})
-                emit('message', {'message': "Defendant questions completed. Mediation ready to start."}, to=clients['defendant'])
+                conversation_history.append(
+                    {"author": "mediator", "message": directions})
+                emit('message', {'author': 'Mediator',
+                     'message': "Defendant questions completed. Mediation ready to start."}, broadcast=True)
 
 
 # WebSocket to handle turn-based mediation and check for refusal to change price
@@ -270,16 +284,19 @@ def handle_mediate(data):
         current_last_prices = defendant_last_prices
 
     # Add the current user's input to the conversation history with author tracking
-    conversation_history.append({"author": current_user, "message": user_input})
+    conversation_history.append(
+        {"author": current_user, "message": user_input})
 
     # Store the user's latest price (we assume 'price' means damages or offer mentioned)
     current_last_prices.append(user_input)
 
     # Check if the user's last 3 responses were the same
     if check_same_last_three(current_last_prices):
-        costs = calculate_costs("plaintiff" if current_user == plaintiff_name else "defendant")
+        costs = calculate_costs(
+            "plaintiff" if current_user == plaintiff_name else "defendant")
         message = f"{current_user} has not changed their asking price for three turns. We appreciate both parties' participation, but we will now end the mediation.\n" \
-                  f"Court costs total: ${costs['courtCostTotal']}. Estimated opportunity cost for {current_user}: ${costs['opportunityCost']}. Time commitment: 1 year."
+            f"Court costs total: ${costs['courtCostTotal']}. Estimated opportunity cost for {
+                current_user}: ${costs['opportunityCost']}. Time commitment: 1 year."
         conversation_history.append({"author": "mediator", "message": message})
         generate_log(message)
         emit('ai_response', {'ai_response': message}, broadcast=True)
@@ -288,13 +305,17 @@ def handle_mediate(data):
     # Check if a common price has been reached
     if check_common_price():
         # If a common price is reached, prompt both users to confirm
-        emit('ai_response', {'ai_response': "A common price has been reached. Both parties must confirm this price to conclude the mediation. Please respond with either 'agree' or 'disagree'."}, broadcast=True)
+        emit('ai_response', {
+             'ai_response': "A common price has been reached. Both parties must confirm this price to conclude the mediation. Please respond with either 'agree' or 'disagree'."}, broadcast=True)
         return
 
     # Prepare the prompt for GPT-4 based on the conversation history and costs
-    history = "\n".join([f"{entry['author']}: {entry['message']}" for entry in conversation_history])
-    costs = calculate_costs("plaintiff" if current_user == plaintiff_name else "defendant")
-    prompt = f"\n{current_user} has raised the following points: {user_input}. As a mediator, please suggest a fair resolution to {other_user}, addressing {current_user}'s concerns. You should also remind {current_user} of the potential costs they face if they go to court, including court costs (${costs['courtCostTotal']}) and opportunity cost (${costs['opportunityCost']})."
+    history = "\n".join(
+        [f"{entry['author']}: {entry['message']}" for entry in conversation_history])
+    costs = calculate_costs("plaintiff" if current_user ==
+                            plaintiff_name else "defendant")
+    prompt = f"\n{current_user} has raised the following points: {user_input}. As a mediator, please suggest a fair resolution to {other_user}, addressing {current_user}'s concerns. You should also remind {
+        current_user} of the potential costs they face if they go to court, including court costs (${costs['courtCostTotal']}) and opportunity cost (${costs['opportunityCost']})."
 
     # Step 1: Feed input to the LLM for mediation
     completion = client.chat.completions.create(
@@ -307,13 +328,15 @@ def handle_mediate(data):
 
     # Step 2: Get response from the LLM
     ai_response = completion.choices[0].message.content
-    conversation_history.append({"author": "mediator", "message": f"AI Mediator to {other_user}: {ai_response}"})
+    conversation_history.append(
+        {"author": "mediator", "message": f"AI Mediator to {other_user}: {ai_response}"})
 
     # Alternate the turn for the next user
     turn = 1 if turn == 2 else 2
 
     # Emit the response to the current user and their opportunity cost
-    emit('ai_response', {'ai_response': ai_response, 'next_user': other_user, 'opportunityCost': costs['opportunityCost']}, to=current_user_sid)
+    emit('ai_response', {'ai_response': ai_response,
+         'opportunityCost': costs['opportunityCost']}, to=current_user_sid)
 
 
 # Flask root to confirm Flask is running
